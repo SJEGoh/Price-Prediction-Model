@@ -11,14 +11,14 @@ from hmmlearn.hmm import GaussianHMM
 ticker = "BTC-USD"
 df = yf.Ticker(ticker).history(period="1y")
 prices = df["Close"]
-returns = prices.pct_change().dropna().values.reshape(-1, 1)
+returns = np.log(prices/prices.shift(1)).dropna().values.reshape(-1, 1)
 
 split = int(len(returns) * 0.8)
 train_returns = returns[:split]
 test_returns  = returns[split:]
 
 # Fit a 2-regime HMM (you can increase to 3)
-model = GaussianHMM(n_components=4, covariance_type="full", n_iter=500)
+model = GaussianHMM(n_components=3, covariance_type="full", n_iter=500)
 model.fit(train_returns.reshape(-1, 1))
 
 train_logprob, train_posteriors = model.score_samples(train_returns.reshape(-1, 1))
@@ -56,6 +56,7 @@ price_paths = np.zeros((n_paths, n_steps))
 for i in range(n_paths):
     S = simulate_regime_path(P, pi_last, n_steps)
     r = simulate_returns(S, mu, sigma)
+    print(r)
     price_paths[i] = returns_to_prices(r, P0)
 
 terminal = price_paths[:, -1]
@@ -87,11 +88,3 @@ plt.legend()
 plt.grid(True)
 plt.show()
 
-'''
-plt.figure(figsize=(12,6))
-plt.plot(prices.index, returns, label="Returns", alpha=0.4)
-plt.scatter(prices.index, returns, c=hidden_states, cmap="coolwarm", s=3)
-plt.title("Inferred Regimes on KO Returns")
-plt.show()
-
-'''
