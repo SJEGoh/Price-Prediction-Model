@@ -56,7 +56,6 @@ price_paths = np.zeros((n_paths, n_steps))
 for i in range(n_paths):
     S = simulate_regime_path(P, pi_last, n_steps)
     r = simulate_returns(S, mu, sigma)
-    print(r)
     price_paths[i] = returns_to_prices(r, P0)
 
 terminal = price_paths[:, -1]

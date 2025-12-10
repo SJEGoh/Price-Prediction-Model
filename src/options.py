@@ -40,7 +40,7 @@ def _cir_neg_loglik(params, v, dt):
 
 
 def calibrate_heston(prices, r=0.01, q=0.0,
-                                 rv_window=10, dt=1/252):
+                                 rv_window=20, dt=1/252):
     logret = np.log(prices / prices.shift(1)).dropna().values
 
     v_series = _realized_variance_from_returns(logret, window=rv_window)
@@ -63,7 +63,7 @@ def calibrate_heston(prices, r=0.01, q=0.0,
         obj,
         x0,
         method="L-BFGS-B",
-        options={"maxiter": 300}
+        options={"maxiter": 1000}
     )
 
     if not res.success:

@@ -3,7 +3,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.ensemble import RandomForestRegressor
 
 class MLDrift:
-    def __init__(self, window=40, n_regimes=3):
+    def __init__(self, window=20, n_regimes=3):
         self.window = window
         self.n_regimes = n_regimes
         self.model = HistGradientBoostingRegressor(
@@ -51,8 +51,8 @@ class MLDrift:
 
         X = np.stack(X)
         y = np.array(y)
-
-        self.model.fit(X, y)
+        sample_weight = np.exp(np.linspace(-3, 0, len(y)))
+        self.model.fit(X, y, sample_weight = sample_weight)
         self._fitted = True
 
     def make_drift_path(self, train_logreturns, S_reg, extra_feats_train=None, fallback_mu=None):

@@ -5,10 +5,12 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from ML import MLDrift
 import pandas as pd
+from helper import earnings
+import shap
 
 class HmmDetect:
     def __init__(self, logreturns_data, means = 3):
-        self.model = GaussianHMM(n_components=means, covariance_type="full", n_iter=1000, verbose = True)
+        self.model = GaussianHMM(n_components=means, covariance_type="full", n_iter=1000)
         self.model.fit(logreturns_data.reshape(-1, 1))
 
         _, posteriors = self.model.score_samples(logreturns_data.reshape(-1, 1))
@@ -16,7 +18,7 @@ class HmmDetect:
         self.mu = self.model.means_.flatten()
         self.sigma = np.sqrt(self.model.covars_).flatten()
         self.P = self.model.transmat_
-        self.pi_last = posteriors[-1] # self.df = np.zeros(self.K)
+        self.pi_last = posteriors[-1] 
 
     def returns_to_prices(self, P0, r):
         return P0 * np.exp(r.cumsum())
@@ -35,25 +37,70 @@ class HmmDetect:
 
 def main():
     ticker = "PLTR"
-    df = yf.Ticker(ticker).history(period="5y")
+    t = yf.Ticker(ticker)
+    df = t.history(period="5y", auto_adjust=False)
+    spy = yf.Ticker("SPY").history(period="5y")["Close"]
     prices = df["Close"]
     logreturns = np.log(prices / prices.shift(1))
 
     feat = pd.DataFrame(index=prices.index)
     feat["logret"]   = logreturns
-    feat["ret_3m"]   = prices.pct_change(63)   
-    feat["ret_6m"]   = prices.pct_change(126) 
-    feat["ret_12m"]  = prices.pct_change(252) 
+    feat["ret_3m"]   = prices.pct_change(21)   
+    feat["ret_6m"]   = prices.pct_change(63) 
+    feat["ret_12m"]  = prices.pct_change(126) 
+    feat["month"] = feat.index.month
+    feat["dow"]   = feat.index.dayofweek
+    feat["volume"] = df["Volume"]
+    feat["vol_20d_avg"] = feat["volume"].rolling(20).mean()
+    feat["vol_z_20d"] = (feat["volume"] - feat["vol_20d_avg"]) / feat["volume"].rolling(20).std()
+    feat["range"] = (df["High"] - df["Low"])/df["Open"]
+    feat["rv_21"] = logreturns.rolling(10).std()
+    feat["rv_63"] = logreturns.rolling(40).std()
+    feat["rv_252"] = logreturns.rolling(80).std()
+    feat["vol_ratio_21_63"]  = feat["rv_21"]  / feat["rv_63"]
+    feat["vol_ratio_21_252"] = feat["rv_21"]  / feat["rv_252"]
+    feat["dividends"] = df["Dividends"]
+    feat["skew_21"] = logreturns.rolling(21).skew()
+    feat["kurt_21"] = logreturns.rolling(21).kurt()
+    feat["mkt_ret"] = np.log(spy / spy.shift(1))
+    feat["mkt_vol"] = feat["mkt_ret"].rolling(21).std()
+    feat["stock_split"] = df["Stock Splits"]
+    feat["ma_20"] = prices.rolling(20).mean()
+    feat["ma_20_dist"] = prices / feat["ma_20"] - 1
+    feat["ma_50"] = prices.rolling(20).mean()
+    feat["ma_50_dist"] = prices / feat["ma_20"] - 1
+    feat["ma_200"] = prices.rolling(20).mean()
+    feat["ma_200_dist"] = prices / feat["ma_20"] - 1
+    ma = prices.rolling(20).mean()
+    std = prices.rolling(20).std()
+    feat["pct_boll"] = (prices - (ma - 2*std)) / (4*std)
 
+    
+    feat = pd.get_dummies(
+        feat,
+        columns=["month", "dow"],
+        prefix=["month", "dow"],
+        drop_first=False
+    )
 
+    feature_cols = list(feat.columns)[1:] \
+        + [c for c in feat.columns if c.startswith("month_")] \
+        + [c for c in feat.columns if c.startswith("dow_")]
 
-    feat = feat.dropna()
+    try:
+        earn = t.get_earnings_dates().reset_index()
+        feat = earnings(earn, feat)
+        feature_cols = feature_cols + ["eps_actual", "eps_est", "eps_surprise", "eps_negative", "eps_positive"]
+    except:
+        print("No Earnings Data")
 
+    print(feat.columns)
+    print(feat)
+    feat = feat.fillna(0)
+    extra_feats = feat[feature_cols].values
+    logreturns = feat["logret"].iloc[1:].values       
 
-    logreturns = feat["logret"].values       
-    extra_feats = feat[["ret_3m","ret_6m","ret_12m"]].values  
-
-    split = int(len(logreturns) * 0.9)
+    split = int(len(logreturns) * 0.95)
     train_returns = logreturns[:split]
     test_returns  = logreturns[split:]
     train_extra = extra_feats[:split]
@@ -61,24 +108,30 @@ def main():
     n_steps = len(test_returns)
 
     detector = HmmDetect(train_returns, means=3)
+    
     h = calibrate_heston(prices[:split], r=0.01, q=0.0)
-
+    
     regimes_train = detector.model.predict(train_returns.reshape(-1, 1))
 
     ml_drift = MLDrift(
-        window=20,
+        window=40,
         n_regimes=detector.model.n_components,
     )
     ml_drift.fit(train_returns, regimes_train, train_extra)
+    explainer = shap.TreeExplainer(ml_drift.model)
+    shap_values = explainer.shap_values(train_extra, check_additivity=False)
 
+    shap.summary_plot(shap_values, train_extra, feature_names=feature_cols)
+    
     S_reg = detector.sim_reg_path(n_steps)
     drift_path = ml_drift.make_drift_path(
         train_logreturns=train_returns,
         S_reg=S_reg,
-        fallback_mu=train_returns.mean()
+        fallback_mu=train_returns.mean(),
+        extra_feats_train = train_extra
     )  
 
-    n_paths = 20000
+    n_paths = 40000
     P0 = prices.iloc[split]         
 
     mu_hat = drift_path.mean()
@@ -86,7 +139,7 @@ def main():
 
     drift_path_corrected = drift_path - mu_hat + mu_real
     drift_path_annual = drift_path_corrected * 252.0
-
+    
     S_paths, v_paths = h.simulate_paths(
         S0=P0,
         T=1.0,                
