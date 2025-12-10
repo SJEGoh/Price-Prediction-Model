@@ -6,8 +6,6 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 from hmmlearn.hmm import GaussianHMM
 
-# setting the period of analysis
-# Load data
 ticker = "BTC-USD"
 df = yf.Ticker(ticker).history(period="1y")
 prices = df["Close"]
@@ -17,7 +15,6 @@ split = int(len(returns) * 0.8)
 train_returns = returns[:split]
 test_returns  = returns[split:]
 
-# Fit a 2-regime HMM (you can increase to 3)
 model = GaussianHMM(n_components=3, covariance_type="full", n_iter=500)
 model.fit(train_returns.reshape(-1, 1))
 

@@ -4,24 +4,15 @@ from heston import Heston   # your existing Heston class
 
 
 def _realized_variance_from_returns(logreturns, window=20):
-    """Rolling realized variance (annualized) from daily log returns."""
-    # daily squared returns
     sq = logreturns**2
-    # rolling mean of squared returns
     rv = np.convolve(sq, np.ones(window)/window, mode="valid")
-    # annualize
     rv_annual = rv * 252.0
-    return rv_annual  # length = len(logreturns) - window + 1
+    return rv_annual 
 
 
 def _cir_neg_loglik(params, v, dt):
-    """
-    Quasi negative log-likelihood for CIR using Euler approximation:
-    v_{t+1} ~ N(m_t, sigma^2 * v_t * dt)
-    """
     kappa, theta, sigma = params
 
-    # basic sanity: enforce positivity
     if kappa <= 0 or theta <= 0 or sigma <= 0:
         return 1e9
 
@@ -31,7 +22,6 @@ def _cir_neg_loglik(params, v, dt):
     m_t = v_t + kappa * (theta - v_t) * dt
     var_t = sigma**2 * v_t * dt
 
-    # avoid division by 0
     var_t = np.where(var_t < 1e-12, 1e-12, var_t)
 
     resid = v_tp1 - m_t

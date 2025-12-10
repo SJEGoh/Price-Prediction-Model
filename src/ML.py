@@ -1,6 +1,5 @@
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.ensemble import RandomForestRegressor
 
 class MLDrift:
     def __init__(self, window=20, n_regimes=3):
