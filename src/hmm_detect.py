@@ -36,10 +36,10 @@ class HmmDetect:
 
 
 def main():
-    ticker = "PLTR"
+    ticker = "Z74.SI"
     t = yf.Ticker(ticker)
-    df = t.history(period="5y", auto_adjust=False)
-    spy = yf.Ticker("SPY").history(period="5y")["Close"]
+    df = t.history(period="5y", auto_adjust=True)
+    spy = yf.Ticker("STI").history(period="5y")["Close"]
     prices = df["Close"]
     split = int(len(prices) * 0.95)
     train_price = prices[:split]
@@ -72,10 +72,10 @@ def main():
     feat["stock_split"] = df[:split]["Stock Splits"]
     feat["ma_20"] = train_price.rolling(20).mean()
     feat["ma_20_dist"] = train_price / feat["ma_20"] - 1
-    feat["ma_50"] = train_price.rolling(20).mean()
-    feat["ma_50_dist"] = train_price / feat["ma_20"] - 1
-    feat["ma_200"] = train_price.rolling(20).mean()
-    feat["ma_200_dist"] = train_price / feat["ma_20"] - 1
+    feat["ma_50"] = train_price.rolling(50).mean()
+    feat["ma_50_dist"] = train_price / feat["ma_50"] - 1
+    feat["ma_200"] = train_price.rolling(200).mean()
+    feat["ma_200_dist"] = train_price / feat["ma_200"] - 1
     ma = train_price.rolling(20).mean()
     std = train_price.rolling(20).std()
     feat["pct_boll"] = (train_price - (ma - 2*std)) / (4*std)

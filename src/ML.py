@@ -50,7 +50,8 @@ class MLDrift:
 
         X = np.stack(X)
         y = np.array(y)
-        sample_weight = np.exp(np.linspace(-3, 0, len(y)))
+        sample_weight = np.where(reg[w:] == 2, 3.0,
+          np.where(reg[w:] == 1, 1.5, 1.0)) * np.exp(np.linspace(-3, 0, len(y)))
         self.model.fit(X, y, sample_weight = sample_weight)
         self._fitted = True
 
