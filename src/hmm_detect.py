@@ -41,39 +41,44 @@ def main():
     df = t.history(period="5y", auto_adjust=False)
     spy = yf.Ticker("SPY").history(period="5y")["Close"]
     prices = df["Close"]
-    logreturns = np.log(prices / prices.shift(1))
+    split = int(len(prices) * 0.95)
+    train_price = prices[:split]
+    train_spy = spy[:split]
 
-    feat = pd.DataFrame(index=prices.index)
-    feat["logret"]   = logreturns
-    feat["ret_3m"]   = prices.pct_change(21)   
-    feat["ret_6m"]   = prices.pct_change(63) 
-    feat["ret_12m"]  = prices.pct_change(126) 
+    logreturns = np.log(prices / prices.shift(1))
+    train_log = np.log(train_price/train_price.shift(1))
+
+    feat = pd.DataFrame(index=train_price.index)
+    feat["logret"]   = train_log
+    feat["ret_3m"]   = train_price.pct_change(21)   
+    feat["ret_6m"]   = train_price.pct_change(63) 
+    feat["ret_12m"]  = train_price.pct_change(126) 
     feat["month"] = feat.index.month
     feat["dow"]   = feat.index.dayofweek
-    feat["volume"] = df["Volume"]
+    feat["volume"] = df[:split]["Volume"]
     feat["vol_20d_avg"] = feat["volume"].rolling(20).mean()
     feat["vol_z_20d"] = (feat["volume"] - feat["vol_20d_avg"]) / feat["volume"].rolling(20).std()
-    feat["range"] = (df["High"] - df["Low"])/df["Open"]
-    feat["rv_21"] = logreturns.rolling(10).std()
-    feat["rv_63"] = logreturns.rolling(40).std()
-    feat["rv_252"] = logreturns.rolling(80).std()
+    feat["range"] = (df[:split]["High"] - df[:split]["Low"])/df[:split]["Open"]
+    feat["rv_21"] = train_log.rolling(10).std()
+    feat["rv_63"] = train_log.rolling(40).std()
+    feat["rv_252"] = train_log.rolling(80).std()
     feat["vol_ratio_21_63"]  = feat["rv_21"]  / feat["rv_63"]
     feat["vol_ratio_21_252"] = feat["rv_21"]  / feat["rv_252"]
-    feat["dividends"] = df["Dividends"]
-    feat["skew_21"] = logreturns.rolling(21).skew()
-    feat["kurt_21"] = logreturns.rolling(21).kurt()
-    feat["mkt_ret"] = np.log(spy / spy.shift(1))
+    feat["dividends"] = df[:split]["Dividends"]
+    feat["skew_21"] = train_log.rolling(21).skew()
+    feat["kurt_21"] = train_log.rolling(21).kurt()
+    feat["mkt_ret"] = np.log(train_spy / train_spy.shift(1))
     feat["mkt_vol"] = feat["mkt_ret"].rolling(21).std()
-    feat["stock_split"] = df["Stock Splits"]
-    feat["ma_20"] = prices.rolling(20).mean()
-    feat["ma_20_dist"] = prices / feat["ma_20"] - 1
-    feat["ma_50"] = prices.rolling(20).mean()
-    feat["ma_50_dist"] = prices / feat["ma_20"] - 1
-    feat["ma_200"] = prices.rolling(20).mean()
-    feat["ma_200_dist"] = prices / feat["ma_20"] - 1
-    ma = prices.rolling(20).mean()
-    std = prices.rolling(20).std()
-    feat["pct_boll"] = (prices - (ma - 2*std)) / (4*std)
+    feat["stock_split"] = df[:split]["Stock Splits"]
+    feat["ma_20"] = train_price.rolling(20).mean()
+    feat["ma_20_dist"] = train_price / feat["ma_20"] - 1
+    feat["ma_50"] = train_price.rolling(20).mean()
+    feat["ma_50_dist"] = train_price / feat["ma_20"] - 1
+    feat["ma_200"] = train_price.rolling(20).mean()
+    feat["ma_200_dist"] = train_price / feat["ma_20"] - 1
+    ma = train_price.rolling(20).mean()
+    std = train_price.rolling(20).std()
+    feat["pct_boll"] = (train_price - (ma - 2*std)) / (4*std)
 
     
     feat = pd.get_dummies(
@@ -82,11 +87,7 @@ def main():
         prefix=["month", "dow"],
         drop_first=False
     )
-
-    feature_cols = list(feat.columns)[1:] \
-        + [c for c in feat.columns if c.startswith("month_")] \
-        + [c for c in feat.columns if c.startswith("dow_")]
-
+    feature_cols = [c for c in feat.columns if c != "logret"]
     try:
         earn = t.get_earnings_dates().reset_index()
         feat = earnings(earn, feat)
@@ -94,17 +95,11 @@ def main():
     except:
         print("No Earnings Data")
 
-    print(feat.columns)
-    print(feat)
     feat = feat.fillna(0)
-    extra_feats = feat[feature_cols].values
-    logreturns = feat["logret"].iloc[1:].values       
+    train_returns = feat["logret"].shift(-1).dropna().values
+    train_extra = feat[feature_cols].iloc[:-1].fillna(0).values
 
-    split = int(len(logreturns) * 0.95)
-    train_returns = logreturns[:split]
-    test_returns  = logreturns[split:]
-    train_extra = extra_feats[:split]
-    
+    test_returns = logreturns[split:].iloc[1:].values
     n_steps = len(test_returns)
 
     detector = HmmDetect(train_returns, means=3)
