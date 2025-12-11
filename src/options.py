@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
-from heston import Heston   # your existing Heston class
+from heston import Heston  
 
 
 def _realized_variance_from_returns(logreturns, window=20):
@@ -63,12 +63,9 @@ def calibrate_heston(prices, r=0.01, q=0.0,
 
     dv = np.diff(v_series)
     lr_for_rho = logret_cut[1:len(dv)+1]
-    if len(dv) > 10:
-        rho_est = np.corrcoef(lr_for_rho, dv)[0, 1]
-    else:
-        rho_est = -0.5  
+    rho_est = np.corrcoef(lr_for_rho, dv)[0, 1]
 
-    rho = float(np.clip(rho_est, -0.95, 0.95))
+    rho = float(rho_est)
 
 
     v0 = float(v_series[-1])

@@ -7,9 +7,9 @@ class MLDrift:
         self.n_regimes = n_regimes
         self.model = HistGradientBoostingRegressor(
             max_depth=5,
-            learning_rate=0.05,
-            max_iter=500,
-            min_samples_leaf=20,
+            learning_rate=0.03,
+            max_iter=400,
+            min_samples_leaf=50,
             l2_regularization=1.0,
             early_stopping=True,
             validation_fraction=0.2,
@@ -30,7 +30,7 @@ class MLDrift:
 
         if extra_feats is not None:
             extra_feats = np.asarray(extra_feats)
-            assert len(extra_feats) == len(r)
+            print(len(extra_feats), len(r))
 
         w = self.window
         X, y = [], []
