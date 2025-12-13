@@ -56,8 +56,6 @@ def calibrate_heston(prices, r=0.01, q=0.0,
         options={"maxiter": 1000}
     )
 
-    if not res.success:
-        print(res.message)
 
     kappa, theta, sigma = res.x
 
@@ -69,14 +67,14 @@ def calibrate_heston(prices, r=0.01, q=0.0,
 
 
     v0 = float(v_series[-1])
-
+    '''
     print("Heston Params: ")
     print(f"kappa = {kappa}")
     print(f"theta = {theta}")
     print(f"sigma = {sigma}")
     print(f"rho   = {rho}")
     print(f"v0    = {v0}")
-
+    '''
     h = Heston(
         kappa=kappa,
         theta=theta,
@@ -86,4 +84,4 @@ def calibrate_heston(prices, r=0.01, q=0.0,
         r=r
     )
 
-    return h
+    return h, [kappa, theta, sigma, rho, v0]

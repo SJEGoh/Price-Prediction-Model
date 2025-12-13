@@ -133,7 +133,7 @@ def filter_feat(model, feature_cols,train_extra, feat, K = None, threshold = Non
         
     filtered_feat = feat[filtered_extra.values].iloc[:-1].values
 
-    return filtered_feat
+    return filtered_feat, filtered_extra.values
 
 def get_drift_corrected(model, log_train, regimes_train, filtered_feat, S_reg, hmm_means, hmm_sds):
     model.fit(log_train, regimes_train, filtered_feat)
@@ -146,7 +146,7 @@ def get_drift_corrected(model, log_train, regimes_train, filtered_feat, S_reg, h
     )  
 
     residuals = log_train[-len(simmed_drift_path):] - simmed_drift_path
-    sigma_ml = np.std(residuals)  # ML noise level
+    sigma_ml = np.std(residuals) 
 
     drift_train = model.make_drift_path(
         train_logreturns=log_train,
@@ -231,21 +231,38 @@ def get_hist(values, bins=3, value_range=None):
     hist /= hist.sum()  
     return hist, bin_edges
 
-def test_metrics(actual_returns, log_S_paths, log_central_path):   
+def test_metrics(actual_returns, log_S_paths, log_central_path): 
+    sim_dist = np.diff(log_S_paths, axis = 1).flatten()
     sim_central = np.diff(log_central_path)[1:]
+    a, _ = get_hist(sim_dist)
+    a += 1e-12
     b, _ = get_hist(actual_returns)
     b += 1e-12
     c, _ = get_hist(sim_central)
     c += 1e-12
     m = 0.5 * (c + b)
+    JS_dist = 0.5 * np.sum(a * np.log(a / m)) + 0.5 * np.sum(b * np.log(b / m))
     JS_med = 0.5 * np.sum(c * np.log(c / m)) + 0.5 * np.sum(b * np.log(b / m))
     w = wasserstein_distance(sim_central, actual_returns)
     RMSE = np.sqrt(np.sum((sim_central - actual_returns)**2)/len(log_central_path))
-    return [JS_med, w, RMSE]
+    return [JS_med, JS_dist, w, RMSE]
+
+def bayesian_confidence(HMMdetector, log_train, drift_path, n_steps):
+    K = HMMdetector.P.shape[0]
+    p = HMMdetector.model.predict_proba(log_train.reshape(-1, 1))[-1]
+    w = np.zeros(n_steps)
+
+    for t in range(n_steps):
+        H = -(p * np.log(p + 1e-12)).sum()
+        w[t] = 1 - H/np.log(K)
+        p = p @ HMMdetector.P
+    mu_base = log_train.mean()
+    return mu_base + w * (drift_path - mu_base)
 
 def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
     rfr = 0.02
     n_paths = 40000
+    P0 = test_price.iloc[0]
     log_train = log_train_ser.dropna().values
     log_test = log_test_ser.dropna().values
 
@@ -256,13 +273,12 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
     train_extra = feat[feature_cols].iloc[:-1].fillna(0).values
 
     HMMdetector = HmmDetect(log_train, means = 3)
-    hmm_means = HMMdetector.model.means_.flatten()      # shape (K,)
-    hmm_sds = np.sqrt(HMMdetector.model.covars_.flatten())     # shape (K,)
+    hmm_means = HMMdetector.model.means_.flatten()      
+    hmm_sds = np.sqrt(HMMdetector.model.covars_.flatten()) 
+    regimes_train = HMMdetector.model.predict(log_train.reshape(-1, 1))   
+    S_reg = HMMdetector.sim_reg_path(n_steps)
 
-    h = calibrate_heston(train_price, r = rfr, q = q)
-
-
-    regimes_train = HMMdetector.model.predict(log_train.reshape(-1, 1))
+    h, _ = calibrate_heston(train_price, r = rfr, q = q)
 
     ml_drift = MLDrift(
         window = 20,
@@ -271,19 +287,19 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
 
     ml_drift.fit(log_train, regimes_train, train_extra)
 
-    filtered_feat = filter_feat(ml_drift.model,feature_cols, train_extra, feat, threshold = 0.005)
-    S_reg = HMMdetector.sim_reg_path(n_steps)
-    P0 = test_price.iloc[0]
+    filtered_feat, _ = filter_feat(ml_drift.model,feature_cols, train_extra, feat, K = 10)
 
     fft_call, mc_call, _, _ = h.heston_fft_terminal_median(
     S0=P0,
     T=n_steps/252,
     q=q,
     )
-    print("FFT call:", fft_call)
+    # print("FFT call:", fft_call)
 
     drift_path_corrected = get_drift_corrected(ml_drift, log_train, regimes_train, filtered_feat, S_reg,
                                                hmm_means, hmm_sds)
+    
+    mu_eff = bayesian_confidence(HMMdetector, log_train, drift_path_corrected, n_steps)
 
     _, v_tmp = h.simulate_paths(
         S0=P0,
@@ -301,7 +317,7 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
     model_annual_vol = np.mean(np.sqrt(v_tmp)) 
 
     vol_scale = annual_vol / model_annual_vol
-    print(f"Volatility scale: {vol_scale}")
+    # print(f"Volatility scale: {vol_scale}")
 
     log_S_paths, _ = h.simulate_paths(
         S0=P0,
@@ -309,7 +325,7 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
         steps=n_steps,
         n_paths=n_paths,
         q=q,
-        mu_override=drift_path_corrected,
+        mu_override=mu_eff,
         vol_scale = vol_scale
     )
 
@@ -335,21 +351,20 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
 
     return model_metrics, gbm_metrics, garch_metrics, [central_path, gbm_central_path, garch_central_path], test_price
 
-def metrics_summary(df):
-    js_mean = round(df["JS"].mean(), 3)
-    js_sd = round(df["JS"].std(), 3)
-    js_max = round(df["JS"].max(), 3)
-    print(f"JS Divergence\nExpected: {js_mean} ± {js_sd}\nMax: {js_max}")
+def metrics_summary(df, model_name):
+    return pd.DataFrame([{
+        "Model": model_name,
 
-    wass_mean = round(df["Wass"].mean(), 3)
-    wass_sd = round(df["Wass"].std(), 3)
-    wass_max = round(df["Wass"].max(), 3)
-    print(f"Wasserstein Distance\nExpected: {wass_mean} ± {wass_sd}\nMax: {wass_max}")
+        "JS Medoid Mean": f"{df['JS_med'].mean():.3f} ± {df['JS_med'].std():.3f}",
+        "JS Medoid Max": df["JS_med"].max(),
 
-    rmse_mean = round(df["RMSE"].mean(), 3)
-    rmse_sd = round(df["RMSE"].std(), 3)
-    rmse_max = round(df["RMSE"].max(), 3)
-    print(f"RMSE\nExpected: {rmse_mean} ± {rmse_sd}\nMax: {rmse_max}\n\n")
+        "JS Dist Mean": f"{df['JS_dist'].mean():.3f} ± {df['JS_dist'].std():.3f}",
+        "JS Dist Max": df["JS_dist"].max(),
 
+        "Wasserstein Mean": f"{df['Wass'].mean():.3f} ± {df['Wass'].std():.3f}",
+        "Wasserstein Max": df["Wass"].max(),
 
+        "RMSE Mean": f"{df['RMSE'].mean():.3f} ± {df['RMSE'].std():.3f}",
+        "RMSE Max": df["RMSE"].max(),
+    }])
 

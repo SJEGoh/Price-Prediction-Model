@@ -31,7 +31,7 @@ class Garch:
         
     def fit(self, train_log):
         garch = arch_model(train_log * 100,
-            mean='zero',
+            mean='constant',
             vol='GARCH',
             p=self.p,
             q=self.q,
