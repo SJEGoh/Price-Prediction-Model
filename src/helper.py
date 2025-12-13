@@ -335,5 +335,21 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
 
     return model_metrics, gbm_metrics, garch_metrics, [central_path, gbm_central_path, garch_central_path], test_price
 
+def metrics_summary(df):
+    js_mean = round(df["JS"].mean(), 3)
+    js_sd = round(df["JS"].std(), 3)
+    js_max = round(df["JS"].max(), 3)
+    print(f"JS Divergence\nExpected: {js_mean} ± {js_sd}\nMax: {js_max}")
+
+    wass_mean = round(df["Wass"].mean(), 3)
+    wass_sd = round(df["Wass"].std(), 3)
+    wass_max = round(df["Wass"].max(), 3)
+    print(f"Wasserstein Distance\nExpected: {wass_mean} ± {wass_sd}\nMax: {wass_max}")
+
+    rmse_mean = round(df["RMSE"].mean(), 3)
+    rmse_sd = round(df["RMSE"].std(), 3)
+    rmse_max = round(df["RMSE"].max(), 3)
+    print(f"RMSE\nExpected: {rmse_mean} ± {rmse_sd}\nMax: {rmse_max}\n\n")
+
 
 
