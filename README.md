@@ -342,7 +342,7 @@ plt.show()
 
 
     
-![png](report_files/report_21_0.png)
+![](figs/SingTel.png)
     
 
 
@@ -433,7 +433,7 @@ plt.show()
 
 
     
-![png](report_files/report_25_0.png)
+![](figs/best_case.png)
     
 
 
@@ -454,7 +454,7 @@ plt.show()
 
 
     
-![png](report_files/report_26_0.png)
+![](figs/worst_case.png)
     
 
 
@@ -475,7 +475,7 @@ plt.show()
 
 
     
-![png](report_files/report_27_0.png)
+![](figs/best_wass.png)
     
 
 
