@@ -17,7 +17,7 @@ class GBM:
         for t in range(n_steps):
             log_S[:, t+1] = log_S[:, t] + drift + diff[:, t]
 
-        return np.exp(log_S)
+        return log_S
 
 
 class Garch:
@@ -53,7 +53,7 @@ class Garch:
         for t in range(n_steps):
             log_S[:, t+1] = log_S[:, t] + R[:, t]
 
-        return np.exp(log_S)
+        return log_S
 
 
 

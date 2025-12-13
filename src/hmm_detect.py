@@ -1,13 +1,5 @@
 from hmmlearn.hmm import GaussianHMM
-from options import calibrate_heston
 import numpy as np
-import yfinance as yf
-import matplotlib.pyplot as plt
-from ML import MLDrift
-import pandas as pd
-from helper import earnings_data
-import shap
-from arch import arch_model
 
 class HmmDetect:
     def __init__(self, logreturns_data, means = 3):
@@ -35,11 +27,6 @@ class HmmDetect:
         return S
 
 def simulate_gbm_paths(S0, mu, sigma, n_steps, n_paths, dt=1/252):
-    """
-    Simple GBM Monte Carlo:
-        dS/S = mu dt + sigma dW
-    Returns array of shape (n_paths, n_steps+1) including S0 at t=0.
-    """
     # Normal shocks: (n_paths, n_steps)
     Z = np.random.randn(n_paths, n_steps)
     # increments in log-price
@@ -55,13 +42,6 @@ def simulate_gbm_paths(S0, mu, sigma, n_steps, n_paths, dt=1/252):
     return np.exp(log_S)
 
 def simulate_garch_paths(S0, sigma_t, n_paths):
-    """
-    Simulate price paths under a GARCH vol forecast with zero drift:
-        r_t ~ N(0, sigma_t^2)
-        S_t = S_{t-1} * exp(r_t)
-    sigma_t: (n_steps,) array of daily forecasted vol
-    Returns: (n_paths, n_steps+1) prices including S0 at t=0.
-    """
     sigma_t = np.asarray(sigma_t)
     n_steps = len(sigma_t)
 

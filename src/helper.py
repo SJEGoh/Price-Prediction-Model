@@ -1,11 +1,13 @@
 import pandas as pd
 import numpy as np
-import yfinance as yf
+from hmm_detect import HmmDetect
+from ML import MLDrift
+from benchmark import GBM, Garch
+from options import calibrate_heston
 import shap
+from scipy.stats import wasserstein_distance
 
-def load_data(ticker, period, split):
-    t = yf.Ticker(ticker)
-    df = t.history(period= period, auto_adjust=True)
+def load_data(df, split):
     prices = df["Close"]
     split = int(len(prices) * split)
 
@@ -14,7 +16,7 @@ def load_data(ticker, period, split):
 
     log_train_ser = np.log(train_price/train_price.shift(1))
     log_test_ser = np.log(test_price/test_price.shift(1))
-    return train_price, test_price, log_train_ser, log_test_ser, df[:split], t
+    return train_price, test_price, log_train_ser, log_test_ser, df[:split]
 
 def earnings_data(earn_df, feat):
     feat.index = feat.index.normalize()
@@ -66,6 +68,9 @@ def make_features(df, train_price, train_log, t):
     feat["ret_6m"]   = train_price.pct_change(days_return//2) 
     feat["ret_12m"]  = train_price.pct_change(days_return) 
     feat["month"] = feat.index.month
+    feat["season"] = np.where(feat["month"] <= 3, 0, 
+                              np.where((feat["month"] > 3) & (feat["month"] <= 6), 1,
+                                        np.where((feat["month"] > 6) & (feat["month"] <= 9), 2, 3)))
     feat["dow"]   = feat.index.dayofweek
     feat["volume"] = df["Volume"]
     feat["vol_20d_avg"] = feat["volume"].rolling(20).mean()
@@ -98,8 +103,8 @@ def make_features(df, train_price, train_log, t):
     
     feat = pd.get_dummies(
         feat,
-        columns=["month", "dow"],
-        prefix=["month", "dow"],
+        columns=["month", "dow", "season"],
+        prefix=["month", "dow", "season"],
         drop_first=False
     )
 
@@ -130,34 +135,45 @@ def filter_feat(model, feature_cols,train_extra, feat, K = None, threshold = Non
 
     return filtered_feat
 
-def get_drift_corrected(model, log_train, regimes_train, filtered_feat, S_reg):
+def get_drift_corrected(model, log_train, regimes_train, filtered_feat, S_reg, hmm_means, hmm_sds):
     model.fit(log_train, regimes_train, filtered_feat)
     
     simmed_drift_path = model.make_drift_path(
         train_logreturns=log_train,
-        S_reg=S_reg,
+        S_reg=regimes_train,
         fallback_mu=log_train.mean(),
         extra_feats_train = filtered_feat
     )  
 
+    residuals = log_train[-len(simmed_drift_path):] - simmed_drift_path
+    sigma_ml = np.std(residuals)  # ML noise level
+
     drift_train = model.make_drift_path(
         train_logreturns=log_train,
-        S_reg=regimes_train,       
+        S_reg=S_reg,       
         fallback_mu=log_train.mean(),
         extra_feats_train=filtered_feat
     )
-    shrink_factor = log_train.std()/drift_train.std()
-    print("Shrink factor:", shrink_factor)
 
-    mu_hat = drift_train.mean()
-    mu_real = log_train.mean()
-    
-    drift_path_corrected = shrink_factor * (simmed_drift_path - mu_hat + mu_real)
+    drift_posterior = np.zeros_like(drift_train)
+    for t in range(len(drift_train)):
+        reg = S_reg[t]
+        mu_k = hmm_means[reg]
+        sigma_k = hmm_sds[reg]
 
-    return drift_path_corrected
+        # precision-based weight (1/var)
+        prec_ml = 1.0 / (sigma_ml**2 + 1e-12)
+        prec_k  = 1.0 / (sigma_k**2 + 1e-12)
+
+        alpha = prec_ml / (prec_ml + prec_k)  # weight on ML
+
+        drift_posterior[t] = alpha * drift_train[t] + (1 - alpha) * mu_k
+
+    return drift_posterior
 
 
 def get_central_path(S_paths, P0, terminal=None, z_band=1.0):
+    # fix later
     S_paths = np.asarray(S_paths)
     if S_paths.ndim != 2:
         raise ValueError(f"S_paths must be 2D (n_paths, n_steps+1), got {S_paths.shape}")
@@ -191,15 +207,133 @@ def get_central_path(S_paths, P0, terminal=None, z_band=1.0):
 
         central_path = sim_prices[idx]
         central_path = np.insert(central_path, 0, P0)
-        return central_path, median_curve, idx
+        lower = np.percentile(candidates, 10, axis=0)   
+        lower = np.insert(lower, 0, P0)
+        upper = np.percentile(candidates, 90, axis=0) 
+        upper = np.insert(upper, 0, P0)
+        return central_path, lower, upper
     median_curve = np.median(sim_prices, axis=0)
     dists = np.sum((sim_prices - median_curve)**2, axis=1)
     idx = np.argmin(dists)
     central_path = sim_prices[idx]
     central_path = np.insert(central_path, 0, P0)
 
-    lower = np.percentile(sim_prices, 40, axis=0)   # (n_steps,)
-    upper = np.percentile(sim_prices, 60, axis=0) 
+    lower = np.percentile(sim_prices, 10, axis=0)   
+    lower = np.insert(lower, 0, P0)
+    upper = np.percentile(sim_prices, 90, axis=0) 
+    upper = np.insert(upper, 0, P0)
 
     return central_path, lower, upper
+
+def get_hist(values, bins=3, value_range=None):
+    hist, bin_edges = np.histogram(values, bins=bins, range=value_range)
+    hist = hist.astype(float)
+    hist /= hist.sum()  
+    return hist, bin_edges
+
+def test_metrics(actual_returns, log_S_paths, log_central_path):   
+    sim_central = np.diff(log_central_path)[1:]
+    b, _ = get_hist(actual_returns)
+    b += 1e-12
+    c, _ = get_hist(sim_central)
+    c += 1e-12
+    m = 0.5 * (c + b)
+    JS_med = 0.5 * np.sum(c * np.log(c / m)) + 0.5 * np.sum(b * np.log(b / m))
+    w = wasserstein_distance(sim_central, actual_returns)
+    RMSE = np.sqrt(np.sum((sim_central - actual_returns)**2)/len(log_central_path))
+    return [JS_med, w, RMSE]
+
+def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
+    rfr = 0.02
+    n_paths = 40000
+    log_train = log_train_ser.dropna().values
+    log_test = log_test_ser.dropna().values
+
+    n_steps = len(log_test)
+    q, feat = make_features(df_train, train_price, log_train_ser, t)
+
+    feature_cols = [c for c in feat.columns if c != "logret"]
+    train_extra = feat[feature_cols].iloc[:-1].fillna(0).values
+
+    HMMdetector = HmmDetect(log_train, means = 3)
+    hmm_means = HMMdetector.model.means_.flatten()      # shape (K,)
+    hmm_sds = np.sqrt(HMMdetector.model.covars_.flatten())     # shape (K,)
+
+    h = calibrate_heston(train_price, r = rfr, q = q)
+
+
+    regimes_train = HMMdetector.model.predict(log_train.reshape(-1, 1))
+
+    ml_drift = MLDrift(
+        window = 20,
+        n_regimes = HMMdetector.model.n_components
+    )
+
+    ml_drift.fit(log_train, regimes_train, train_extra)
+
+    filtered_feat = filter_feat(ml_drift.model,feature_cols, train_extra, feat, threshold = 0.005)
+    S_reg = HMMdetector.sim_reg_path(n_steps)
+    P0 = test_price.iloc[0]
+
+    fft_call, mc_call, _, _ = h.heston_fft_terminal_median(
+    S0=P0,
+    T=n_steps/252,
+    q=q,
+    )
+    print("FFT call:", fft_call)
+
+    drift_path_corrected = get_drift_corrected(ml_drift, log_train, regimes_train, filtered_feat, S_reg,
+                                               hmm_means, hmm_sds)
+
+    _, v_tmp = h.simulate_paths(
+        S0=P0,
+        T=1.0,                
+        steps=n_steps,
+        n_paths=n_paths,
+        q=q,
+        mu_override=None
+    )
+
+    log_returns = np.diff(np.log(train_price.values))
+
+    annual_vol = log_returns.std() * np.sqrt(252)
+
+    model_annual_vol = np.mean(np.sqrt(v_tmp)) 
+
+    vol_scale = annual_vol / model_annual_vol
+    print(f"Volatility scale: {vol_scale}")
+
+    log_S_paths, _ = h.simulate_paths(
+        S0=P0,
+        T=1.0,                
+        steps=n_steps,
+        n_paths=n_paths,
+        q=q,
+        mu_override=drift_path_corrected,
+        vol_scale = vol_scale
+    )
+
+    log_central_path, lower, upper = get_central_path(log_S_paths, np.log(P0), terminal = np.log(fft_call))
+
+
+    actual_returns = np.diff(log_test)
+    model_metrics = test_metrics(actual_returns, log_S_paths, log_central_path)
+    central_path = np.exp(log_central_path)
+
+    GBM_model = GBM(log_train.mean(), log_train.std())
+    gbm_paths = GBM_model.simulate(S0 = P0, n_steps = n_steps, n_paths = n_paths)
+    gbm_central_path, gbm_lower, gbm_upper = get_central_path(gbm_paths, np.log(P0))
+    gbm_metrics = test_metrics(actual_returns, gbm_paths, gbm_central_path)
+    gbm_central_path = np.exp(gbm_central_path)
+
+    GARCH_model = Garch()
+    GARCH_model.fit(log_train)
+    garch_paths = GARCH_model.simulate(S0 = P0, n_steps = n_steps, n_paths = n_paths)
+    garch_central_path, garch_lower, garch_upper = get_central_path(garch_paths, np.log(P0))
+    garch_metrics = test_metrics(actual_returns, garch_paths, garch_central_path)
+    garch_central_path = np.exp(garch_central_path)
+
+    return model_metrics, gbm_metrics, garch_metrics, [central_path, gbm_central_path, garch_central_path], test_price
+
+
 

@@ -20,10 +20,10 @@ class Heston:
         eDT = np.exp(-d * T)
 
         one_minus_g_eDT = 1 - g * eDT
-        one_minus_g     = 1 - g
+        one_minus_g = 1 - g
 
         one_minus_g_eDT = np.where(np.abs(one_minus_g_eDT) < 1e-15, 1e-15, one_minus_g_eDT)
-        one_minus_g     = np.where(np.abs(one_minus_g)     < 1e-15, 1e-15, one_minus_g)
+        one_minus_g = np.where(np.abs(one_minus_g) < 1e-15, 1e-15, one_minus_g)
 
         phi1 = i*u*(self.r - q)*T + (a/(self.sigma**2)) * ((b - d)*T - 2.0*np.log(one_minus_g_eDT/one_minus_g))
         phi2 = ((b - d)/(self.sigma**2)) * ((1 - eDT) / one_minus_g_eDT)
@@ -32,9 +32,10 @@ class Heston:
 
     def simulate_paths(self, S0, T, steps, n_paths, q = 0.0, mu_override = None, vol_scale = 1.0):
         dt = T/steps
+        log_S = np.zeros((n_paths, steps+1))
         S = np.zeros((n_paths, steps+1))
         v = np.zeros((n_paths, steps+1))
-
+        log_S[:, 0] = np.log(S0)
         S[:, 0] = S0
         v[:, 0] = self.v0
 
@@ -56,13 +57,9 @@ class Heston:
 
             vol_term = vol_scale * np.sqrt(np.maximum(v_prev, 0.0) * dt)
             drift_term = (drift - 0.5 * (vol_scale**2) * v_prev) * dt
-
-            S[:, t+1] = S[:, t] * np.exp(drift_term + vol_term * z1)
-            S[:,t+1] = S[:,t] * np.exp(
-                (drift - 0.5*v_prev)*dt +
-                np.sqrt(v_prev*dt)*z1
-                )
-        return S, v
+            log_S[:, t+1] = log_S[:, t] + drift_term + vol_term * z1
+            
+        return log_S, v
     
     def _simpson_weights(self, N: int):
         if N % 2 != 0:

@@ -30,7 +30,6 @@ class MLDrift:
 
         if extra_feats is not None:
             extra_feats = np.asarray(extra_feats)
-            print(len(extra_feats), len(r))
 
         w = self.window
         X, y = [], []
