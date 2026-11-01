@@ -303,7 +303,7 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
 
     _, v_tmp = h.simulate_paths(
         S0=P0,
-        T=1.0,                
+        T=n_steps/252,                
         steps=n_steps,
         n_paths=n_paths,
         q=q,
@@ -321,11 +321,11 @@ def test(train_price, test_price, log_train_ser, log_test_ser, df_train, t):
 
     log_S_paths, _ = h.simulate_paths(
         S0=P0,
-        T=1.0,                
+        T=n_steps/252,                
         steps=n_steps,
         n_paths=n_paths,
         q=q,
-        mu_override=mu_eff,
+        mu_override=mu_eff * 252,
         vol_scale = vol_scale
     )
 
